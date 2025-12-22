@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>eBay CSV to Shipping Labels PDF</title>
+  <link rel="stylesheet" href="style.css" />
+
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+</head>
+
+<body>
+  <header class="wrap">
+    <h1>eBay CSV to Shipping Labels PDF</h1>
+  </header>
+
+  <main class="wrap">
+    <section class="card">
+      <h2>Upload eBay CSV</h2>
+      <div class="row">
+        <input id="csvFile" type="file" accept=".csv,text/csv" />
+        <button id="btnClear" class="secondary" type="button">Clear</button>
+      </div>
+      <div id="fileInfo" class="muted small"></div>
+      <div id="status" class="status"></div>
+    </section>
+
+    <section class="card">
+      <h2>PDF settings</h2>
+      <div class="grid3">
+        <label>
+          Paper size
+          <select id="paperSize">
+            <option value="a4">A4</option>
+            <option value="letter">Letter</option>
+          </select>
+        </label>
+
+        <label>
+          Output filename
+          <input id="outputName" type="text" value="shipping_labels.pdf" />
+        </label>
+
+        <label>
+          Labels per page
+          <input id="labelsPerPage" type="number" value="3" min="1" max="8" />
+        </label>
+      </div>
+
+      <details class="details">
+        <summary>Column mapping (only change if your CSV headers differ)</summary>
+        <div id="mappingArea" class="mappingArea"></div>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2>Sender (Ship From)</h2>
+
+      <label>
+        Sender address (one textbox, one line per row)
+        <textarea
+          id="senderBox"
+          rows="7"
+          placeholder="Example:
+Sender Name
+Street Address
+Apt / Suite (optional)
+City, State ZIP
+Country
+Phone: 123456789"
+        ></textarea>
+      </label>
+
+      <div class="row">
+        <button id="btnSaveSender" type="button" class="primary">Save</button>
+        <button id="btnClearSender" type="button" class="secondary">Clear sender</button>
+        <span id="senderSavedHint" class="muted small"></span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Recipients (editable)</h2>
+      <div class="row">
+        <button id="btnGenerate" type="button" class="primary" disabled>Generate PDF</button>
+        <span id="countInfo" class="muted small"></span>
+      </div>
+
+      <div class="tableWrap">
+        <table id="recipientsTable">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
