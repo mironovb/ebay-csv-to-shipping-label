@@ -295,6 +295,90 @@ function readRecipientsFromTable() {
   return out;
 }
 
+// ---------- Unicode font support ----------
+
+// In-memory cache so fonts are only fetched once per session.
+const _fontBase64Cache = {};
+
+async function _fetchFontBase64(url) {
+  if (_fontBase64Cache[url]) return _fontBase64Cache[url];
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const buf = await res.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  const chunks = [];
+  const CHUNK = 8192;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    chunks.push(String.fromCharCode(...bytes.subarray(i, Math.min(i + CHUNK, bytes.length))));
+  }
+  const b64 = btoa(chunks.join(""));
+  _fontBase64Cache[url] = b64;
+  return b64;
+}
+
+// Noto Sans: broad Unicode coverage (Latin incl. extended, Greek, Cyrillic, Hebrew, Arabic, Thai …).
+// Noto Sans JP (subset OTF): also covers CJK unified ideographs (Japanese, Korean, Chinese).
+const NOTO_SANS_REGULAR_URL = "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts/hinted/ttf/NotoSans/NotoSans-Regular.ttf";
+const NOTO_SANS_BOLD_URL    = "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts/hinted/ttf/NotoSans/NotoSans-Bold.ttf";
+const NOTO_CJK_URL          = "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk/Sans/SubsetOTF/NotoSansJP-Regular.otf";
+
+// Pending fetch promises – prevents duplicate concurrent fetches across calls.
+let _notoSansPromise = null;
+let _notoCJKPromise  = null;
+
+async function _registerNotoSans(doc) {
+  if (!_notoSansPromise) {
+    _notoSansPromise = Promise.all([
+      _fetchFontBase64(NOTO_SANS_REGULAR_URL),
+      _fetchFontBase64(NOTO_SANS_BOLD_URL),
+    ]);
+  }
+  const [regB64, boldB64] = await _notoSansPromise;
+  doc.addFileToVFS("NotoSans-Regular.ttf", regB64);
+  doc.addFont("NotoSans-Regular.ttf", "NotoSans", "normal");
+  doc.addFileToVFS("NotoSans-Bold.ttf", boldB64);
+  doc.addFont("NotoSans-Bold.ttf", "NotoSans", "bold");
+}
+
+async function _registerNotoCJK(doc) {
+  if (!_notoCJKPromise) {
+    _notoCJKPromise = _fetchFontBase64(NOTO_CJK_URL);
+  }
+  const b64 = await _notoCJKPromise;
+  doc.addFileToVFS("NotoSansCJK-Regular.otf", b64);
+  doc.addFont("NotoSansCJK-Regular.otf", "NotoSansCJK", "normal");
+  // Register the same regular file as "bold" so setFont("NotoSansCJK","bold") works.
+  doc.addFont("NotoSansCJK-Regular.otf", "NotoSansCJK", "bold");
+}
+
+function _hasCJK(text) {
+  // Covers: CJK Symbols/Punctuation, Hiragana, Katakana, Bopomofo,
+  //         CJK Ext-A (U+3400-U+4DBF), CJK Unified Ideographs (U+4E00-U+9FFF),
+  //         CJK Compatibility Ideographs, and Hangul Syllables.
+  return /[\u3000-\u9FFF\uF900-\uFAFF\uAC00-\uD7AF]/.test(text);
+}
+
+function _hasNonAscii(text) {
+  return /[^\u0000-\u007F]/.test(text);
+}
+
+// Returns the jsPDF font family name to use for the given content.
+// Falls back to "helvetica" if fonts cannot be fetched (e.g. no network).
+async function _chooseFont(doc, allText) {
+  if (!_hasNonAscii(allText)) return "helvetica";
+  try {
+    await _registerNotoSans(doc);
+    if (_hasCJK(allText)) {
+      await _registerNotoCJK(doc);
+      return "NotoSansCJK";
+    }
+    return "NotoSans";
+  } catch (err) {
+    console.warn("Unicode font loading failed; falling back to Helvetica:", err);
+    return "helvetica";
+  }
+}
+
 // ---------- PDF generation ----------
 function recipientLines(r) {
   const lines = [];
@@ -314,8 +398,11 @@ function recipientLines(r) {
   return lines;
 }
 
-function generatePdf(allRecipients, senderLines, paperSize, labelsPerPage, filename) {
+async function generatePdf(allRecipients, senderLines, paperSize, labelsPerPage, filename) {
   const doc = new jsPDF({ unit: "mm", format: paperSize });
+
+  const allText = [...senderLines, ...allRecipients.flatMap(r => recipientLines(r))].join(" ");
+  const fontFamily = await _chooseFont(doc, allText);
 
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
@@ -345,11 +432,12 @@ function generatePdf(allRecipients, senderLines, paperSize, labelsPerPage, filen
     const yFrom = yPositions[labelCounter];
     const yTo = yFrom + shiftDownTo;
 
-    doc.setFont("helvetica", "bold");
+    doc.setFont(fontFamily, "bold");
     doc.setFontSize(headerFont);
     doc.text("Ship From:", xFrom, yFrom);
     doc.text("Ship To:", xTo, yTo);
 
+    doc.setFont(fontFamily, "normal");
     doc.setFontSize(textFont);
 
     const sWrapped = wrapLines(doc, senderLines, leftMaxW);
@@ -397,7 +485,7 @@ els.csvFile.addEventListener("change", async (e) => {
   rebuildRecipientsAndTable();
 });
 
-els.btnGenerate.addEventListener("click", () => {
+els.btnGenerate.addEventListener("click", async () => {
   const senderLines = senderLinesFromBox();
   if (!senderLines.length) {
     setStatus("Sender box is empty.");
@@ -416,7 +504,7 @@ els.btnGenerate.addEventListener("click", () => {
 
   try {
     setStatus("Generating PDF...");
-    generatePdf(rowsNow, senderLines, paperSize, labelsPerPage, filename);
+    await generatePdf(rowsNow, senderLines, paperSize, labelsPerPage, filename);
     setStatus("PDF generated.");
   } catch (err) {
     console.error(err);
